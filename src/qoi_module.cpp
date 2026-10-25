@@ -18,7 +18,7 @@ PackedStringArray ImageFormatLoaderQOI::_get_recognized_extensions() const {
     return arr;
 }
 
-Error ImageFormatLoaderQOI::_load_image(Ref<Image> p_image, Ref<FileAccess> p_file, BitField<ImageFormatLoader::LoaderFlags> p_flags, float p_scale) const {
+Error ImageFormatLoaderQOI::_load_image(Ref<Image> p_image, Ref<FileAccess> p_file, BitField<ImageFormatLoader::LoaderFlags> _p_flags, float _p_scale) const {
     ERR_FAIL_NULL_V(p_file, ERR_BUG);
     ERR_FAIL_NULL_V(p_image, ERR_BUG);
 
@@ -53,14 +53,13 @@ Error ImageFormatLoaderQOI::_load_image(Ref<Image> p_image, Ref<FileAccess> p_fi
         pixel_data
     );
 
-    // TODO: implement p_flags
-
     return OK;
 }
 
 void ImageQOI::_bind_methods() {
     ClassDB::bind_method(D_METHOD("save_qoi", "path"), &ImageQOI::save_qoi);
     ClassDB::bind_method(D_METHOD("save_qoi_to_buffer"), &ImageQOI::save_qoi_to_buffer);
+    ClassDB::bind_method(D_METHOD("load_qoi_from_buffer", "buffer"), &ImageQOI::load_qoi_from_buffer);
     ClassDB::bind_static_method("ImageQOI", D_METHOD("from_image", "img"), &ImageQOI::from_image);
 }
 
@@ -75,6 +74,38 @@ Ref<ImageQOI> ImageQOI::from_image(const Ref<Image> &p_img) {
         p_img->get_data()
     );
     return result;
+}
+
+Error ImageQOI::load_qoi_from_buffer(const PackedByteArray &p_array) {
+    ERR_FAIL_COND_V(p_array.size() == 0, ERR_INVALID_PARAMETER);
+
+    qoi_desc desc;
+    void *decoded = qoi_decode(p_array.ptr(), p_array.size(), &desc, 0);
+    ERR_FAIL_NULL_V(decoded, ERR_INVALID_DATA);
+
+    Image::Format format;
+    if (desc.channels == 3) {
+        format = Image::FORMAT_RGB8;
+    } else if (desc.channels == 4) {
+        format = Image::FORMAT_RGBA8;
+    } else {
+        QOI_FREE(decoded);
+        return ERR_INVALID_DATA;
+    }
+
+    int64_t data_size = (int64_t)desc.width * (int64_t)desc.height * (int64_t)desc.channels;
+    PackedByteArray pixel_data;
+    pixel_data.resize(data_size);
+    memcpy(pixel_data.ptrw(), decoded, pixel_data.size());
+    QOI_FREE(decoded);
+
+    set_data(
+        desc.width, desc.height,
+        false, format,
+        pixel_data
+    );
+
+    return OK;
 }
 
 Ref<ImageQOI> ImageQOI::_ensure(int &r_channels) {
@@ -131,7 +162,7 @@ Error ImageQOI::save_qoi(const String &path) {
     Ref<FileAccess> file = FileAccess::open(path, FileAccess::WRITE);
     ERR_FAIL_COND_V(file.is_null(), ERR_FILE_CANT_OPEN);
 
-    int size;
+    int size = -1;
     qoi_desc desc;
     desc.width = img->get_width();
     desc.height = img->get_height();
@@ -140,6 +171,11 @@ Error ImageQOI::save_qoi(const String &path) {
 
     void *encoded = qoi_encode(img->get_data().ptr(), &desc, &size);
     ERR_FAIL_NULL_V(encoded, FAILED);
+
+    if (size <= 0) {
+        QOI_FREE(encoded);
+        ERR_FAIL_COND_V(size <= 0, FAILED);
+    }
 
     file->store_buffer((const uint8_t *)encoded, size);
     QOI_FREE(encoded);
@@ -156,7 +192,7 @@ PackedByteArray ImageQOI::save_qoi_to_buffer() {
     Ref<ImageQOI> img = _ensure(channels);
     ERR_FAIL_COND_V(channels != 3 && channels != 4, PackedByteArray());
 
-    int size;
+    int size = -1;
     qoi_desc desc;
     desc.width = img->get_width();
     desc.height = img->get_height();
@@ -165,6 +201,11 @@ PackedByteArray ImageQOI::save_qoi_to_buffer() {
 
     void *encoded = qoi_encode(img->get_data().ptr(), &desc, &size);
     ERR_FAIL_NULL_V(encoded, PackedByteArray());
+
+    if (size <= 0) {
+        QOI_FREE(encoded);
+        ERR_FAIL_COND_V(size <= 0, PackedByteArray());
+    }
 
     PackedByteArray buffer;
     buffer.resize(size);
